@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+
+############################################################
+##
+## SYSTEM REQUIREMENTS
+##
+############################################################
+
+# Requires Bash 4 or greater because of the associative array.
+if ((${BASH_VERSINFO[0]} < 4))
+then
+  printf '%s%s\n' "This script requires Bash 4, " \
+    "but you are using Bash ${BASH_VERSINFO[0]}." 1>&2
+  exit 1
+fi
+
+############################################################
+##
+## SCRIPTWIDE VARIABLES
+##
+############################################################
+
+# This will hold our arguments and their values.
+declare -A argsDict
+
+# This holds the last argsDict key that we processed.
+declare LAST_KEY=''
+
+# The colors that we will use for stdout/stderr.
+declare -r ERROR_COLOR='\033[0;31m'
+declare -r NO_COLOR='\033[0m'
+
+# This will hold a an error for each required flag that is missing.
+declare ERROR_MESSAGE_MISSING_FLAGS=''
+
+# This will hold the message that we finally write to the log.
+declare LOG_ENTRY=''
+
+############################################################
+##
+## FUNCTIONS
+##
+############################################################
+
+showUsage(){
+  printf '\n%s\n' 'Usage:'
+
+  printf '\n\t%s\n' '--help or -h: (optional)'
+  printf '\t\t%s\n' 'Show this message.'
+
+  printf '\n\t%s\n' '--path or -p: (optional)'
+  printf '\t\t%s\n' 'The path to the logfile that this should append to.'
+  printf '\t\t%s\n' 'Defaults to a file called "log" in the current directory.'
+
+  printf '\n\t%s\n' '--service or -s:'
+  printf '\t\t%s\n' 'The name of the service submitting an entry.'
+
+  printf '\n\t%s\n' '--level or -l:'
+  printf '\t\t%s\n' 'The logging level. (e.g., error, warning, info).'
+
+  printf '\n\t%s\n' '--message or -m:'
+  printf '\t\t%s\n' 'Human-readable message for this log entry.'
+
+  printf '\n\t%s\n' '--data or -d: (optional)'
+  printf '\t\t%s\n' 'Supplimental data related to this log entry '
+  printf '\t\t%s\n' '(e.g., JSON or a URI).'
+
+  printf '\n%s\n' 'Log syntax:'
+  printf '\t%s\n' 'server_time|service|level|message|data'
+
+  printf '\n%s\n' 'Input Examples:'
+
+  printf '\t%s%s\n' '--service someAPI --level error --message "Invalid JSON"'\
+    '--data "{OK:no}"'
+
+  printf '\t%s%s\n' '--service myApp --level warning '\
+    '-m "Only 4.3 GB left on disk."'
+
+  printf '\t%s\n' '-s myApp -l info -m "User 728 deleted item 728."'
+
+  printf '\n%s\n' 'Output Examples:'
+
+  printf '\t%s%s\n' '2017-12-20 16:46:31 EDT|'\
+    'someAPI|error|Invalid JSON|{OK:no}'
+
+  printf '\t%s%s\n' '2017-12-20 16:48:17 EDT|'\
+    'myApp|warning|Only 4.3 GB left on disk.|'
+
+  printf '\t%s%s\n' '2017-12-20 16:52:21 EDT|'\
+    'other app|info|User 728 deleted item 728.|'
+}
+
+onRequiredFlagMissing(){
+  if (($# < 1))
+  then
+    ERROR_MESSAGE='A required parameter was missing.'
+  else
+    ERROR_MESSAGE="$1"
+  fi
+
+  showUsageWithErrorMessageThenExit "$ERROR_MESSAGE"
+}
+
+showUsageWithErrorMessageThenExit(){
+  ERROR_MESSAGE="$1"
+  showUsage 1>&2
+  printf '\n%b\n' "${ERROR_COLOR}ERROR: $ERROR_MESSAGE" 1>&2
+  printf '\n%s%b\n' "Please review the usage guide printed "\
+    "above this error message.${NO_COLOR}" 1>&2
+  exit 2
+}
+
+# When we have a double-dash param, we just add it to the associative array.
+# There is no possibility of combining flags in an argument that starts with
+# double dashes.
+# If the next argument is not a flag, then it can use $LAST_KEY to establish
+# its position in the associative array.
+processDoubleDash(){
+  LAST_KEY=${1}
+  argsDict[$LAST_KEY]=""
+}
+
+# Arguments that start with a single dash could be a single flag, but they
+# could also be stacked (e.g., git commit -am "Blah"). In that case we want
+# each letter to have its own spot in the associative array.
+# If the next argment is not a flag, then we can use $LAST_KEY to set the value
+# of the key that represents the final stacked letter.
+processSingleDash(){
+  LETTERS=${1}
+  for ((i=${#LETTERS}-1 ; i>0 ; i--))
+  do
+    LAST_KEY="-${LETTERS:$i:1}"
+    argsDict[$LAST_KEY]=""
+  done
+}
+
+recordIfRequiredFlagMissing(){
+  ONE_DASH=$1
+  TWO_DASH=$2
+  ERROR_MESSAGE="$3"
+
+  if [ ! ${argsDict[-$ONE_DASH]} ] && [ ! ${argsDict[--$TWO_DASH]} ]
+  then
+    ERROR_MESSAGE_MISSING_FLAGS+='\n\t'${ERROR_MESSAGE}
+  fi
+}
+
+errorOutIfRequiredFlagsAreMissing(){
+  if ((${#ERROR_MESSAGE_MISSING_FLAGS} > 0))
+  then
+    onRequiredFlagMissing "$ERROR_MESSAGE_MISSING_FLAGS"
+  fi
+}
+
+makeLogEntry(){
+  LOG_DATE=$(date +'%F %T %Z')
+
+  [[ ${argsDict['-s']} ]] &&
+    LOG_SERVICE=${argsDict['-s']} ||
+    LOG_SERVICE=${argsDict['--service']}
+
+  [[ ${argsDict['-l']} ]] &&
+    LOG_LEVEL=${argsDict['-l']} ||
+    LOG_LEVEL=${argsDict['--level']}
+
+  [[ ${argsDict['-m']} ]] &&
+    LOG_MESSAGE=${argsDict['-m']} ||
+    LOG_MESSAGE=${argsDict['--message']}
+
+  [[ ${argsDict['-d']} ]] &&
+    LOG_DATA=${argsDict['-d']} ||
+    LOG_DATA=${argsDict['--data']}
+
+  LOG_ENTRY="$LOG_DATE|$LOG_SERVICE|$LOG_LEVEL|$LOG_MESSAGE|$LOG_DATA"
+}
+
+writeLogEntry(){
+  [[ ${argsDict['-p']} ]] &&
+    LOGFILE_PATH=${argsDict['-p']} ||
+    LOGFILE_PATH=${argsDict['--path']}
+
+  [[ ${#LOGFILE_PATH} > 0 ]] &&
+    LOGFILE_PATH="$LOGFILE_PATH" ||
+    LOGFILE_PATH='./log'
+
+  echo $LOG_ENTRY >> "$LOGFILE_PATH"
+}
+
+############################################################
+##
+# MAIN LOGIC
+##
+############################################################
+
+# If the first argument isn't a flag then the request isn't properly formatted.
+# Remind the user of the correct syntax and exit (which happens).
+if [[ ! $1 =~ ^- ]]
+then
+  showUsageWithErrorMessageThenExit '\n\tMissing parameters.'
+fi
+
+# If the first argument is a help flag then show the usage guide and exit.
+if [[ $1 == "--help" ]] || [[ $1 == "-h" ]]
+then
+  showUsage
+  exit 0
+fi
+
+# For each argument that this script was given,
+# If the argument is a flag, use it to set a key for the associative array.
+# If the argument is not a flag, set it to the value of the most recently
+# parsed flag in the associative array.
+for ARG in "$@"
+do
+  if [[ $ARG =~ ^-- ]]
+  then
+    processDoubleDash $ARG
+  elif [[ $ARG =~ ^- ]]
+  then
+    processSingleDash $ARG
+  else
+    argsDict[$LAST_KEY]=$ARG
+  fi
+done
+
+recordIfRequiredFlagMissing s service 'Please include a service name.'
+recordIfRequiredFlagMissing l level 'Please include a log level.'
+recordIfRequiredFlagMissing m message 'Please include a log message.'
+
+errorOutIfRequiredFlagsAreMissing
+makeLogEntry
+writeLogEntry
