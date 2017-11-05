@@ -71,7 +71,7 @@ showUsage(){
   printf '\n%s\n' 'Input Examples:'
 
   printf '\t%s%s\n' '--service someAPI --level error --message "Invalid JSON"'\
-    '--data "{OK:no}"'
+    ' --data "{OK:no}"'
 
   printf '\t%s%s\n' '--service myApp --level warning '\
     '-m "Only 4.3 GB left on disk."'
